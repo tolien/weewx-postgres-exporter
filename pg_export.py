@@ -7,10 +7,6 @@ import time
 import sqlite3 as sqlite
 import psycopg2
 
-"""
-Script for exporting the weewx archive database to a remote postgresql database.
-"""
-
 SQLITE_ARCHIVE = "/var/lib/weewx/weewx.sdb"
 PG_HOST = "some.host.tld"
 PG_DB = "db_name"
@@ -20,8 +16,8 @@ PG_PASS = "password"
 
 ## TESTING AREA
 def main():
-    local_dt = get_latest_archive_row_datetime_local()
-    remote_dt = get_latest_archive_row_datetime_remote()
+    local_dt = get_latest_datetime_local()
+    remote_dt = get_latest_datetime_remote()
 
     if not local_dt:
         print("Local database empty. Not populated yet?")
@@ -32,7 +28,7 @@ def main():
 
     if local_dt != remote_dt:
         print("Unequal timestamps between local and remote database.")
-        result = fetch_archive_rows_since_datetime(remote_dt)
+        result = fetch_rows_since_datetime(remote_dt)
         print("Number of new rows: %s" % len(result))
         #convert_values(result)
         write_to_pg_db(result)
@@ -49,8 +45,8 @@ def _query_sqlite(query):
         result = cur.fetchall()
         return result
 
-    except sqlite.Error as e:
-        print("Error fetching SQLite data %s" % e.args[0])
+    except sqlite.Error as error:
+        print("Error fetching SQLite data %s" % error.args[0])
         sys.exit(1)
 
     finally:
@@ -63,8 +59,8 @@ def _connect_to_remote_pg():
         con = psycopg2.connect(con_string)
         return con
 
-    except Exception as e:
-        print("Error fetching PostgreSQL data: %s" % e.args[0])
+    except psycopg2.Error as error:
+        print("Error fetching PostgreSQL data: %s" % error.args[0])
         sys.exit(1)
 
 def _query_pg(query):
@@ -76,8 +72,8 @@ def _query_pg(query):
         result = cur.fetchall()
         return result
 
-    except Exception as e:
-        print("Error fetching PostgreSQL data: %s" % e.args[0])
+    except psycopg2.Error as error:
+        print("Error fetching PostgreSQL data: %s" % error.args[0])
         sys.exit(1)
 
     finally:
@@ -93,41 +89,39 @@ def _insert_pg(query):
         result = cur.fetchall()
         return result
 
-    except Exception as e:
-        print("Error inserting data to PostgreSQL database: %s" % e.args[0])
+    except psycopg2.Error as error:
+        print("Error inserting data to PostgreSQL database: %s" % error.args[0])
         sys.exit(1)
 
     finally:
         if con:
             con.close()
 
-def fetch_archive_rows_since_datetime(date_time):
+def fetch_rows_since_datetime(date_time):
     """Fetch the rows from the 'archive' SQLite database since given datetime"""
     timestamp = int(time.mktime(date_time.timetuple()))
     query = "SELECT * FROM archive WHERE dateTime > {timestamp}".format(
                 timestamp=timestamp)
     return _query_sqlite(query)
 
-def get_latest_archive_row_datetime_local():
+def get_latest_datetime_local():
     """Return the datetime of the latest row written"""
     query = "SELECT dateTime FROM archive ORDER BY dateTime DESC LIMIT 1"
     result = _query_sqlite(query)
-    if len(result):
-        dt = datetime.fromtimestamp(result[0][0])
-        print(dt.strftime('%Y-%m-%d %H:%M:%S'))
-        return dt
-    else:
-        return None
+    if result:
+        newest_datetime = datetime.fromtimestamp(result[0][0])
+        print("Local datetime: ", newest_datetime.strftime('%Y-%m-%d %H:%M:%S'))
+        return newest_datetime
+    return None
 
-def get_latest_archive_row_datetime_remote():
+def get_latest_datetime_remote():
     """Return the datetime of the latest row written"""
     query = "SELECT datetime FROM archive ORDER BY datetime DESC LIMIT 1"
     result = _query_pg(query)
-    if len(result):
+    if result:
         print(result[0][0].strftime('%Y-%m-%d %H:%M:%S'))
         return result[0][0]
-    else:
-        return None
+    return None
 
 def convert_values(rows):
     """Convert values to a more suited format"""
@@ -202,14 +196,12 @@ def write_to_pg_db(rows):
                         );"""
 
             cur.execute(query, row)
-            print "Add data point from %s" % datetime.fromtimestamp(row[0]).strftime('%Y-%m-%d %H:%M:%S')
-            #print cur.fetchone()[0]
         con.commit()
 
-    except psycopg2.DatabaseError as e:
+    except psycopg2.DatabaseError as error:
         if con:
             con.rollback()
-        print("PostgreSQL error: %s" % e)
+        print("PostgreSQL error: %s" % error)
         sys.exit(1)
 
     finally:
